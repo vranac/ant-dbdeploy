@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<project name="dbDeploy_example" basedir="." default="default">
+    <description>This is an ant build.xml file for the example dbdeploy project.</description>
+
+    <!-- Define the timestamp format for the generated files -->
+    <tstamp>
+        <format property="current.time" pattern="yyyy-MM-dd-HH-mm-ss"/>
+    </tstamp>
+
+    <!-- Load our configuration -->
+    <property file="./build.properties"/>
+
+    <!-- Define the sources dir -->
+    <property name="src" value="."/>
+
+    <!-- Define the path to the dbdeploy dir -->
+    <property name="build.dbdeploy.dbdeploy_dir" value="${src}/../dbdeploy"/>
+
+    <!-- Define the path to the deltas/alters dir -->
+    <property name="build.dbdeploy.alters_dir" value="${src}/../db/alters"/>
+
+    <!-- Define the path to the deploy flat file dir -->
+    <property name="build.dbdeploy.deploy_dir" value="${src}/../db/deploy"/>
+
+    <!-- Define the path to the undo flat file dir -->
+    <property name="build.dbdeploy.undo_dir" value="${src}/../db/undo"/>
+
+    <!-- Last change number to apply, useful for preventing the unchecked delta to mess things up -->
+    <property name="build.dbdeploy.lastChangeToApply" value="20"/>
+
+    <!-- Define the db driver -->
+    <property name="db.driver" value="com.mysql.jdbc.Driver"/>
+
+    <!-- Define the url to the database -->
+    <property name="db.url" value="jdbc:mysql://${db.host}:${db.port}/${db.name}"/>
+
+    <!-- Define the target DBMS -->
+    <property name="db.dbms" value="mysql"/>
+
+    <!-- Define tha path to the changelog table sql file -->
+    <property name="build.dbdeploy.changelog_file" value="${build.dbdeploy.deploy_dir}/scripts/createSchemaVersionTable.mysql.sql"/>
+
+    <!-- these two filenames will contain the generated SQL to do the deploy and roll it back-->
+    <property name="build.dbdeploy.deployfile" value="deploy-${current.time}.sql"/>
+    <property name="build.dbdeploy.undofile" value="undo-${current.time}.sql"/>
+
+    <property name="use-verbose" value="false"/>
+
+    <!-- Define the classpath for the db driver -->
+    <path id="mysql.classpath">
+        <fileset dir="${build.dbdeploy.dbdeploy_dir}">
+            <include name="mysql*.jar"/>
+        </fileset>
+    </path>
+
+    <!-- Define the classpath for the dbdeploy -->
+    <path id="dbdeploy.classpath">
+        <!-- include the dbdeploy-ant jar -->
+        <fileset dir="${build.dbdeploy.dbdeploy_dir}">
+            <include name="dbdeploy-ant-*.jar"/>
+        </fileset>
+
+        <!-- The dbdeploy task also needs the database driver jar on the classpath -->
+        <path refid="mysql.classpath"/>
+    </path>
+
+    <!-- Declare the dbdeploy task -->
+    <taskdef name="dbdeploy" classname="com.dbdeploy.AntTarget" classpathref="dbdeploy.classpath"/>
+
+    <!-- Target to generate the changelog table in the database -->
+    <!-- This should be run only the first time db is created (and if it is ever recreated), so ugly, but works -->
+    <target name="create-changelog-table">
+        <sql driver="${db.driver}" url="${db.url}"
+             userid="${db.user}" password="${db.pass}" classpathref="mysql.classpath">
+            <fileset file="${build.dbdeploy.changelog_file}"/>
+        </sql>
+    </target>
+
+    <!-- Target to generate two scripts, one for deploy, the other for rollback to the version specified in the build properties file,
+         useful when you want to submit to DBA for review -->
+    <target name="dbdeploy-generate-sql">
+
+        <!-- Generate the directories for the deploy and undo files -->
+        <mkdir dir="${build.dbdeploy.deploy_dir}" />
+        <mkdir dir="${build.dbdeploy.undo_dir}" />
+
+        <!-- generate the deployment scripts -->
+        <dbdeploy
+                driver="${db.driver}"
+                url="${db.url}"
+                userid="${db.user}"
+                password="${db.pass}"
+                dir="${build.dbdeploy.alters_dir}"
+                outputfile="${build.dbdeploy.deploy_dir}/${build.dbdeploy.deployfile}"
+                undooutputfile="${build.dbdeploy.undo_dir}/${build.dbdeploy.undofile}"
+                dbms="${db.dbms}"
+                lastChangeToApply="${build.dbdeploy.lastChangeToApply}"
+                />
+    </target>
+
+    <!-- Target to generate two scripts, one for deploy, the other for rollback, useful when you want to submit to DBA for review -->
+    <target name="dbdeploy-generate-sql-all">
+
+        <!-- Generate the directories for the deploy and undo files -->
+        <mkdir dir="${build.dbdeploy.deploy_dir}" />
+        <mkdir dir="${build.dbdeploy.undo_dir}" />
+
+        <!-- generate the deployment scripts -->
+        <dbdeploy
+                driver="${db.driver}"
+                url="${db.url}"
+                userid="${db.user}"
+                password="${db.pass}"
+                dir="${build.dbdeploy.alters_dir}"
+                outputfile="${build.dbdeploy.deploy_dir}/${build.dbdeploy.deployfile}"
+                undooutputfile="${build.dbdeploy.undo_dir}/${build.dbdeploy.undofile}"
+                dbms="${db.dbms}"
+                />
+    </target>
+
+    <!-- Target to actually do the migration to the version specified in the build properties file -->
+    <target name="dbdeploy-migrate">
+
+        <!-- generate the deployment scripts -->
+        <dbdeploy
+                driver="${db.driver}"
+                url="${db.url}"
+                userid="${db.user}"
+                password="${db.pass}"
+                dir="${build.dbdeploy.alters_dir}"
+                dbms="${db.dbms}"
+                lastChangeToApply="${build.dbdeploy.lastChangeToApply}"
+                />
+
+    </target>
+
+
+    <!-- Target to actually do the migration to the latest version -->
+    <target name="dbdeploy-migrate-all">
+
+        <!-- generate the deployment scripts -->
+        <dbdeploy
+                driver="${db.driver}"
+                url="${db.url}"
+                userid="${db.user}"
+                password="${db.pass}"
+                dir="${build.dbdeploy.alters_dir}"
+                dbms="${db.dbms}"
+                />
+
+    </target>
+
+    <!-- Target to import the geenrated deploy sql file into db via mysql -->
+    <target name="dbdeploy-execute-sql" depends="dbdeploy-generate-sql">
+        <!-- execute the SQL - Use mysql command line to avoid trouble with large files or many statements and PDO -->
+        <exec
+                command="${progs.mysql} -h${db.host} -u${db.user} -p${db.pass} ${db.name} &lt; ${build.dbdeploy.deployfile}"
+                dir="${build.dir}"
+                checkreturn="true"/>
+    </target>
+</project>
